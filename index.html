@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音程練習アプリ</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        #main-container {
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        h1 {
+            color: #4A90E2;
+        }
+        #note-display {
+            font-size: 4rem;
+            font-weight: bold;
+            margin: 1rem 0;
+            color: #d9534f;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            background-color: #000;
+            width: 100%;
+            max-width: 600px;
+            height: 200px;
+        }
+        #info-display {
+            margin-top: 1rem;
+            font-size: 1.2rem;
+        }
+        button {
+            background-color: #5cb85c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #4cae4c;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <h1>音程練習アプリ</h1>
+        <p>下の音に合わせて声を出してください。</p>
+        <div id="note-display">Press Start</div>
+        <canvas id="visualizer" width="600" height="200"></canvas>
+        <div id="info-display">
+            <p>ピーク周波数: <span id="peak-freq">0</span> Hz</p>
+            <p>目標とのズレ: <span id="diff-freq">0</span> Hz</p>
+        </div>
+        <button id="startButton">スタート</button>
+    </div>
+
+    <script>
+        // DOM要素の取得
+        const noteDisplay = document.getElementById('note-display');
+        const peakFreqDisplay = document.getElementById('peak-freq');
+        const diffFreqDisplay = document.getElementById('diff-freq');
+        const startButton = document.getElementById('startButton');
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+
+        // 音階と周波数の定義 (C4=ド)
+        const notes = [
+            { name: 'ド', freq: 261.63 },
+            { name: 'レ', freq: 293.66 },
+            { name: 'ミ', freq: 329.63 },
+            { name: 'ファ', freq: 349.23 },
+            { name: 'ソ', freq: 392.00 },
+            { name: 'ラ', freq: 440.00 },
+            { name: 'シ', freq: 493.88 },
+            { name: 'ド', freq: 523.25 }
+        ];
+
+        let audioContext;
+        let analyser;
+        let microphoneStream;
+        let dataArray;
+        let bufferLength;
+        let currentNoteIndex = 0;
+        let animationFrameId;
+
+        startButton.addEventListener('click', startPractice);
+
+        async function startPractice() {
+            startButton.disabled = true;
+            startButton.textContent = '練習中...';
+
+            if (!audioContext) {
+                try {
+                    // Web Audio APIの初期化
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048; // FFTサイズを設定[2][3]
+                    bufferLength = analyser.frequencyBinCount;
+                    dataArray = new Uint8Array(bufferLength);
+
+                    // マイクへのアクセスを要求[2][4]
+                    microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    const source = audioContext.createMediaStreamSource(microphoneStream);
+                    source.connect(analyser);
+                } catch (err) {
+                    alert('マイクへのアクセス許可が必要です。');
+                    console.error('マイクの取得に失敗:', err);
+                    startButton.disabled = false;
+                    startButton.textContent = 'スタート';
+                    return;
+                }
+            }
+            
+            processNextNote();
+        }
+
+        function processNextNote() {
+            if (currentNoteIndex >= notes.length) {
+                // 全ての音階が終了した場合
+                stopPractice();
+                noteDisplay.textContent = '終了!';
+                return;
+            }
+
+            const currentNote = notes[currentNoteIndex];
+            noteDisplay.textContent = currentNote.name;
+            
+            // リアルタイム解析を開始
+            analyze(currentNote.freq);
+
+            // 5秒後に次の音へ
+            setTimeout(() => {
+                cancelAnimationFrame(animationFrameId);
+                currentNoteIndex++;
+                processNextNote();
+            }, 5000); // 5000ミリ秒 = 5秒
+        }
+
+        function analyze(targetFreq) {
+            animationFrameId = requestAnimationFrame(() => analyze(targetFreq));
+
+            // 周波数データを取得[4][7]
+            analyser.getByteFrequencyData(dataArray);
+
+            // ピーク周波数を探す
+            let maxVal = -1;
+            let maxIndex = -1;
+            for (let i = 0; i < bufferLength; i++) {
+                if (dataArray[i] > maxVal) {
+                    maxVal = dataArray[i];
+                    maxIndex = i;
+                }
+            }
+            
+            // インデックスを周波数(Hz)に変換
+            const peakFreq = maxIndex * audioContext.sampleRate / analyser.fftSize;
+
+            // UIを更新
+            peakFreqDisplay.textContent = peakFreq.toFixed(2);
+            diffFreqDisplay.textContent = (peakFreq - targetFreq).toFixed(2);
+            
+            // グラフを描画
+            drawVisualizer(targetFreq, peakFreq);
+        }
+
+        function drawVisualizer(targetFreq, peakFreq) {
+            canvasCtx.fillStyle = '#000';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const barWidth = (canvas.width / bufferLength);
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = dataArray[i] / 2;
+                canvasCtx.fillStyle = `rgb(50, ${barHeight + 100}, 50)`;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                x += barWidth;
+            }
+
+            // 目標周波数の線を描画 (赤色)
+            const targetFreqX = (targetFreq / (audioContext.sampleRate / 2)) * canvas.width;
+            canvasCtx.fillStyle = 'red';
+            canvasCtx.fillRect(targetFreqX, 0, 2, canvas.height);
+
+            // ピーク周波数の線を描画 (黄色)
+            const peakFreqX = (peakFreq / (audioContext.sampleRate / 2)) * canvas.width;
+            canvasCtx.fillStyle = 'yellow';
+            canvasCtx.fillRect(peakFreqX, 0, 2, canvas.height);
+        }
+
+        function stopPractice() {
+            if (microphoneStream) {
+                microphoneStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            cancelAnimationFrame(animationFrameId);
+            startButton.disabled = false;
+            startButton.textContent = 'もう一度やる';
+            currentNoteIndex = 0;
+        }
+
+    </script>
+</body>
+</html>
