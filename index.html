@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>音程練習アプリ (v2)</title>
+    <title>音程練習アプリ (v3)</title>
     <style>
         body {
             font-family: sans-serif;
@@ -13,8 +13,9 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
+            padding: 1rem 0;
         }
         #main-container {
             background: white;
@@ -25,9 +26,16 @@
             width: 90%;
             max-width: 640px;
         }
-        h1 {
+        h1, h2 {
             color: #4A90E2;
             margin-top: 0;
+        }
+        h2 {
+            font-size: 1.2rem;
+            margin-bottom: 0.5rem;
+            border-top: 1px solid #eee;
+            padding-top: 1.5rem;
+            margin-top: 1.5rem;
         }
         #progress-display {
             font-size: 1.2rem;
@@ -39,7 +47,7 @@
             font-weight: bold;
             margin: 0.5rem 0;
             color: #d9534f;
-            height: 5rem; /* 高さを固定してレイアウトのガタつきを防ぐ */
+            height: 5rem;
             line-height: 5rem;
         }
         canvas {
@@ -54,7 +62,7 @@
             display: flex;
             justify-content: space-around;
         }
-        button {
+        #startButton {
             margin-top: 1rem;
             background-color: #5cb85c;
             color: white;
@@ -65,12 +73,31 @@
             cursor: pointer;
             transition: background-color 0.3s;
         }
-        button:hover {
+        #startButton:hover {
             background-color: #4cae4c;
         }
-        button:disabled {
+        #startButton:disabled {
             background-color: #ccc;
             cursor: not-allowed;
+        }
+        #tone-buttons-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+        .tone-button {
+            background-color: #4A90E2;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            font-size: 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .tone-button:hover {
+            background-color: #357ABD;
         }
     </style>
 </head>
@@ -85,6 +112,13 @@
             <p>目標とのズレ: <span id="diff-freq">0</span> Hz</p>
         </div>
         <button id="startButton">スタート</button>
+        
+        <!-- ▼▼▼ ここから追加 ▼▼▼ -->
+        <h2>お手本の音</h2>
+        <div id="tone-buttons-container">
+            <!-- ボタンはJavaScriptで動的に生成されます -->
+        </div>
+        <!-- ▲▲▲ ここまで追加 ▲▲▲ -->
     </div>
 
     <script>
@@ -96,22 +130,60 @@
         const progressDisplay = document.getElementById('progress-display');
         const canvas = document.getElementById('visualizer');
         const canvasCtx = canvas.getContext('2d');
+        const toneButtonsContainer = document.getElementById('tone-buttons-container');
 
         // 音階と周波数の定義 (C4=ド)
         const baseNotes = [
             { name: 'ド', freq: 261.63 }, { name: 'レ', freq: 293.66 },
             { name: 'ミ', freq: 329.63 }, { name: 'ファ', freq: 349.23 },
             { name: 'ソ', freq: 392.00 }, { name: 'ラ', freq: 440.00 },
-            { name: 'シ', freq: 493.88 }, { name: 'ド', freq: 523.25 }
+            { name: 'シ', freq: 493.88 }, { name: 'ド+', freq: 523.25 }
         ];
 
         let notes = [];
         let currentNoteIndex = 0;
-        let audioContext, analyser, microphoneStream, dataArray, bufferLength, animationFrameId;
+        let audioContext, analyser, microphoneStream, animationFrameId;
+
+        // --- ▼▼▼ ここから追加 ▼▼▼ ---
+        // AudioContextを管理する関数
+        function getAudioContext() {
+            if (!audioContext || audioContext.state === 'closed') {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return audioContext;
+        }
+
+        // 指定された周波数の音を指定された時間再生する関数
+        function playTone(frequency, duration) {
+            const context = getAudioContext();
+            const oscillator = context.createOscillator();
+            const gainNode = context.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(context.destination);
+
+            oscillator.type = 'sine'; // サイン波を生成
+            oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+            gainNode.gain.setValueAtTime(0.5, context.currentTime); // 音量は50%
+
+            oscillator.start(context.currentTime);
+            oscillator.stop(context.currentTime + duration); // duration秒後に停止[3]
+        }
+        
+        // お手本再生ボタンを動的に生成
+        baseNotes.forEach(note => {
+            const button = document.createElement('button');
+            button.className = 'tone-button';
+            button.textContent = note.name;
+            button.addEventListener('click', () => {
+                playTone(note.freq, 3); // 3秒間再生
+            });
+            toneButtonsContainer.appendChild(button);
+        });
+        // --- ▲▲▲ ここまで追加 ▲▲▲ ---
 
         startButton.addEventListener('click', startPractice);
         
-        // 配列をシャッフルする関数 (Fisher-Yates shuffle)
         function shuffle(array) {
             for (let i = array.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
@@ -123,35 +195,30 @@
         async function startPractice() {
             startButton.disabled = true;
             currentNoteIndex = 0;
-
-            // 5周分のランダムな音階配列を作成
             notes = [];
             for (let i = 0; i < 5; i++) {
-                // baseNotesのコピーをシャッフルして連結する
                 notes = notes.concat(shuffle([...baseNotes]));
             }
             
             startButton.textContent = '練習中...';
 
-            if (!audioContext) {
-                try {
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    analyser = audioContext.createAnalyser();
-                    // --- 変更点: 周波数解析を滑らかにする ---
+            try {
+                const context = getAudioContext();
+                if (!analyser) {
+                    analyser = context.createAnalyser();
                     analyser.smoothingTimeConstant = 0.8;
                     analyser.fftSize = 2048;
-                    bufferLength = analyser.frequencyBinCount;
-                    dataArray = new Uint8Array(bufferLength);
-                    microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                    const source = audioContext.createMediaStreamSource(microphoneStream);
-                    source.connect(analyser);
-                } catch (err) {
-                    alert('マイクへのアクセス許可が必要です。ページを再読み込みして再度お試しください。');
-                    console.error('マイクの取得に失敗:', err);
-                    startButton.disabled = false;
-                    startButton.textContent = 'スタート';
-                    return;
                 }
+                if (!microphoneStream || !microphoneStream.active) {
+                    microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    const source = context.createMediaStreamSource(microphoneStream);
+                    source.connect(analyser);
+                }
+            } catch (err) {
+                alert('マイクへのアクセス許可が必要です。ページを再読み込みして再度お試しください。');
+                console.error('マイクの取得に失敗:', err);
+                stopPractice(false); // エラー時はAudioContextを閉じずに終了
+                return;
             }
             
             processNextNote();
@@ -164,76 +231,58 @@
                 progressDisplay.textContent = 'お疲れ様でした！';
                 return;
             }
-
             const currentNote = notes[currentNoteIndex];
             noteDisplay.textContent = currentNote.name;
-
-            // --- 変更点: ラウンド表示の追加 ---
             const totalRounds = 5;
             const notesPerRound = baseNotes.length;
             const currentRound = Math.floor(currentNoteIndex / notesPerRound) + 1;
             const noteInRound = (currentNoteIndex % notesPerRound) + 1;
             progressDisplay.textContent = `Round ${currentRound}/${totalRounds} (${noteInRound}/${notesPerRound})`;
-            
             analyze(currentNote.freq);
-
             setTimeout(() => {
                 cancelAnimationFrame(animationFrameId);
                 currentNoteIndex++;
                 processNextNote();
             }, 5000);
         }
-
+        
         function analyze(targetFreq) {
             animationFrameId = requestAnimationFrame(() => analyze(targetFreq));
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
             analyser.getByteFrequencyData(dataArray);
 
-            const maxFreq = 800;
-            const nyquist = audioContext.sampleRate / 2;
+            const bufferLength = analyser.frequencyBinCount;
+            const nyquist = getAudioContext().sampleRate / 2;
             const indexToFreqRatio = nyquist / bufferLength;
-
-            // 800Hzに対応するインデックスまでの範囲でピークを探す
+            const maxFreq = 800;
             const maxIndexInScope = Math.floor(maxFreq / indexToFreqRatio);
-            let maxVal = -1;
-            let maxIndex = -1;
-            for (let i = 0; i < maxIndexInScope; i++) {
-                if (dataArray[i] > maxVal) {
-                    maxVal = dataArray[i];
-                    maxIndex = i;
-                }
-            }
             
+            let maxVal = -1, maxIndex = -1;
+            for (let i = 0; i < maxIndexInScope; i++) {
+                if (dataArray[i] > maxVal) { maxVal = dataArray[i]; maxIndex = i; }
+            }
             const peakFreq = maxIndex * indexToFreqRatio;
-
             peakFreqDisplay.textContent = peakFreq.toFixed(2);
             diffFreqDisplay.textContent = (peakFreq - targetFreq).toFixed(2);
-            
-            drawVisualizer(targetFreq, peakFreq, maxIndexInScope);
+            drawVisualizer(dataArray, targetFreq, peakFreq, maxIndexInScope);
         }
 
-        function drawVisualizer(targetFreq, peakFreq, maxIndexInScope) {
+        function drawVisualizer(dataArray, targetFreq, peakFreq, maxIndexInScope) {
             canvasCtx.fillStyle = '#000';
             canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-
-            const maxFreqToDisplay = 800; // --- 変更点: 表示上の最大周波数 ---
+            const maxFreqToDisplay = 800;
             const barWidth = (canvas.width / maxIndexInScope);
-            let x = 0;
-
-            for (let i = 0; i < maxIndexInScope; i++) {
+            for (let i = 0, x = 0; i < maxIndexInScope; i++) {
                 const barHeight = dataArray[i] / 2;
                 canvasCtx.fillStyle = `rgb(50, ${barHeight + 100}, 50)`;
                 canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
                 x += barWidth;
             }
-
-            // 目標周波数の線を描画 (赤色)
             if (targetFreq <= maxFreqToDisplay) {
                 const targetFreqX = (targetFreq / maxFreqToDisplay) * canvas.width;
                 canvasCtx.fillStyle = 'red';
                 canvasCtx.fillRect(targetFreqX, 0, 2, canvas.height);
             }
-
-            // ピーク周波数の線を描画 (黄色)
             if (peakFreq > 0 && peakFreq <= maxFreqToDisplay) {
                 const peakFreqX = (peakFreq / maxFreqToDisplay) * canvas.width;
                 canvasCtx.fillStyle = 'yellow';
@@ -241,17 +290,19 @@
             }
         }
 
-        function stopPractice() {
+        function stopPractice(fullStop = true) {
             if (microphoneStream) {
                 microphoneStream.getTracks().forEach(track => track.stop());
                 microphoneStream = null;
             }
-            if (audioContext && audioContext.state !== 'closed') {
-                audioContext.close().then(() => audioContext = null);
-            }
             cancelAnimationFrame(animationFrameId);
             startButton.disabled = false;
             startButton.textContent = 'もう一度やる';
+
+            // AudioContextは閉じないように変更。お手本ボタンで再利用するため
+            // if (fullStop && audioContext && audioContext.state !== 'closed') {
+            //     audioContext.close().then(() => audioContext = null);
+            // }
         }
     </script>
 </body>
